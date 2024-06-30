@@ -6,9 +6,6 @@ using System;
 using WindBot;
 using WindBot.Game;
 using WindBot.Game.AI;
-using System.Web.UI.WebControls;
-using System.Text;
-using System.Web.UI;
 
 namespace WindBot.Game.AI.Decks
 {
@@ -113,6 +110,7 @@ namespace WindBot.Game.AI.Decks
             AddExecutor(ExecutorType.Activate, CardId.GoldSarcophagus, GoldSarcophagusActivate);
             AddExecutor(ExecutorType.Activate, CardId.AluberTheJesterOfDespia, AluberTheJesterOfDespiaActivate);
             AddExecutor(ExecutorType.Activate, CardId.DespianTragedy, DespianTragedyActivate);
+            AddExecutor(ExecutorType.Activate, CardId.TriBrigadeMercourier, TriBrigadeMercourierActivate);
 
             // blazing
             AddExecutor(ExecutorType.Activate, CardId.FusionDeployment, FusionDeploymentActivate);
@@ -120,6 +118,12 @@ namespace WindBot.Game.AI.Decks
 
             AddExecutor(ExecutorType.Activate, CardId.AlbionTheShroudedDragon, AlbionTheShroudedDragonActivate);
             AddExecutor(ExecutorType.Activate, CardId.BystialSaronir, BystialSaronirActivate);
+
+            // summon for search
+            AddExecutor(ExecutorType.Summon, CardId.AluberTheJesterOfDespia, AluberTheJesterOfDespiaSummon);
+            AddExecutor(ExecutorType.Summon, CardId.GuidingQuemTheVirtuous, GuidingQuemTheVirtuousSummonForSearch);
+            AddExecutor(ExecutorType.Activate, CardId.SpringansKitt, SpringansKittActivate);
+            AddExecutor(ExecutorType.Summon, CardId.SpringansKitt, SpringansKittSummon);
 
             // fusion & lost
             AddExecutor(ExecutorType.Activate, CardId.AlbionTheBrandedDragon, AlbaLenatusTheAbyssDragonActivate);
@@ -129,12 +133,6 @@ namespace WindBot.Game.AI.Decks
             AddExecutor(ExecutorType.Activate, CardId.BrandedFusion, BrandedFusionActivate);
             AddExecutor(ExecutorType.Activate, CardId.BrandedInWhite, BrandedInWhiteActivate);
             AddExecutor(ExecutorType.Activate, CardId.BrandedInRed, BrandedInRedActivate);
-
-            // summon for search
-            AddExecutor(ExecutorType.Summon, CardId.AluberTheJesterOfDespia, AluberTheJesterOfDespiaSummon);
-            AddExecutor(ExecutorType.Summon, CardId.GuidingQuemTheVirtuous, GuidingQuemTheVirtuousSummonForSearch);
-            AddExecutor(ExecutorType.Activate, CardId.SpringansKitt, SpringansKittActivate);
-            AddExecutor(ExecutorType.Summon, CardId.SpringansKitt, SpringansKittSummon);
 
             // albaz summon
             AddExecutor(ExecutorType.Summon, CardId.FallenOfAlbaz, FallenOfAlbazSummon);
@@ -485,6 +483,193 @@ namespace WindBot.Game.AI.Decks
             ClientCard currentSolvingChain = Duel.GetCurrentSolvingChainCard();
             if (currentSolvingChain != null)
             {
+                // for branded fusion
+                if (currentSolvingChain.IsCode(CardId.BrandedFusion))
+                {
+                    if (hint == HintMsg.SpSummon)
+                    {
+                        Dictionary<int, Func<bool>> checkDict = new Dictionary<int, Func<bool>>
+                        {
+                            {CardId.TitanikladTheAshDragon, () => Enemy.HasInMonstersZone(CardId.KashtiraAriseHeart) },
+                            {CardId.RindbrummTheStrikingDragon,  () => CheckWhetherWillbeRemoved() && CheckRemainInDeck(CardId.TriBrigadeMercourier) > 0},
+                            {CardId.AlbionTheSanctifireDragon, () => CheckShouldNoMoreSpSummon()},
+                            {CardId.AlbionTheBrandedDragon, () => {
+                                bool checkFlag = Bot.Graveyard.Any(c => c != null && c.IsMonster() && c.HasAttribute(CardAttribute.Dark) && !cannotBeFusionMaterialIdList.Contains(c.Id));
+                                checkFlag |= Bot.HasInHandOrHasInMonstersZone(CardId.TriBrigadeMercourier);
+                                checkFlag |= Bot.GetMonsters().Any(c => c.GetDefensePower() <= 1800 && c.HasAttribute(CardAttribute.Dark) && !cannotBeFusionMaterialIdList.Contains(c.Id));
+                                return checkFlag;
+                            } },
+                            {CardId.LubellionTheSearingDragon, () => !CheckWhetherNegated(true, true, CardType.Monster) && Bot.Hand.Count() > 0 },
+                            {CardId.MirrorjadeTheIcebladeDragon, () => Bot.HasInMonstersZone(new List<int>{
+                                CardId.GranguignolTheDuskDragon, CardId.AlbionTheBrandedDragon, CardId.LubellionTheSearingDragon}) }
+                        };
+
+                        foreach (KeyValuePair<int, Func<bool>> pair in checkDict)
+                        {
+                            ClientCard target = cards.FirstOrDefault(card => card.IsCode(pair.Key));
+                            if (target != null && pair.Value())
+                            {
+                                fusionTarget = target;
+                                return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                            }
+                        }
+                    }
+                    if (hint == HintMsg.FusionMaterial)
+                    {
+                        // selecting albaz
+                        if (selectedFusionMaterial.Count() == 0)
+                        {
+                            List<Func<ClientCard, bool>> funcList = new List<Func<ClientCard, bool>> {
+                                (c) => c.IsCode(CardId.FallenOfAlbaz) && c.Location == CardLocation.Deck,
+                                (c) => c.IsCode(CardId.FallenOfAlbaz) && c.Location == CardLocation.Hand,
+                                (c) => c.IsCode(CardId.FallenOfAlbaz) && c.Location == CardLocation.MonsterZone
+                            };
+
+                            foreach (Func<ClientCard, bool> func in funcList)
+                            {
+                                ClientCard target = cards.Where(c => func(c)).FirstOrDefault();
+                                if (target != null)
+                                {
+                                    selectedFusionMaterial.Add(target);
+                                    return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                                }
+                            }
+                        }
+                        // selecting another material
+                        if (fusionTarget != null)
+                        {
+                            Dictionary<int, List<int>> materialDict = new Dictionary<int, List<int>>
+                            {
+                                { CardId.AlbionTheSanctifireDragon, new List<int>{CardId.BlazingCartesiaTheVirtuous, _CardId.EffectVeiler, CardId.GuidingQuemTheVirtuous} },
+                                { CardId.MirrorjadeTheIcebladeDragon, new List<int>{CardId.GranguignolTheDuskDragon, CardId.AlbionTheBrandedDragon, CardId.DespianLuluwalilith } },
+                                { CardId.LubellionTheSearingDragon, new List<int>{
+                                    CardId.DespianTragedy, CardId.BystialSaronir, CardId.AlbionTheShroudedDragon, CardId.AluberTheJesterOfDespia, CardId.TriBrigadeMercourier } },
+                                { CardId.TitanikladTheAshDragon, new List<int>{CardId.TheBystialLubellion, CardId.AlbionTheShroudedDragon, CardId.BystialSaronir} },
+                                { CardId.RindbrummTheStrikingDragon, new List<int>{CardId.TriBrigadeMercourier, CardId.SpringansKitt } },
+                                { CardId.AlbionTheBrandedDragon, new List<int>{CardId.TheBystialLubellion, CardId.BlazingCartesiaTheVirtuous, CardId.GuidingQuemTheVirtuous } }
+                            };
+                            foreach (KeyValuePair<int, List<int>> pair in materialDict)
+                            {
+                                if (fusionTarget.IsCode(pair.Key))
+                                {
+                                    foreach (CardLocation location in new List<CardLocation> { CardLocation.Deck, CardLocation.Hand, CardLocation.MonsterZone})
+                                    {
+                                        foreach (int checkId in pair.Value)
+                                        {
+                                            ClientCard target = cards.FirstOrDefault(c => c.Location == location && c.IsCode(checkId));
+                                            if (target != null)
+                                            {
+                                                selectedFusionMaterial.Add(target);
+                                                return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // for branded dragon
+                if (currentSolvingChain.IsCode(CardId.AlbionTheBrandedDragon))
+                {
+                    if (hint == HintMsg.SpSummon)
+                    {
+                        Dictionary<int, Func<bool>> checkDict = new Dictionary<int, Func<bool>>
+                        {
+                            {CardId.MirrorjadeTheIcebladeDragon, () => {
+                                bool checkFlag = !CheckWhetherNegated() && CheckShouldNoMoreSpSummon();
+                                checkFlag |= Bot.Graveyard.Any(c => c != null && !sendToGYThisTurn.Contains(c) && !cannotBeFusionMaterialIdList.Contains(c.Id)
+                                    && c.HasType(CardType.Fusion | CardType.Synchro | CardType.Xyz | CardType.Link));
+                                return checkFlag;
+                            } },
+                            {CardId.LubellionTheSearingDragon, () =>
+                            {
+                                if (!activatedCardIdList.Contains(CardId.LubellionTheSearingDragon))
+                                {
+                                    List<ClientCard> checkMaterialList = new List<ClientCard>(Bot.GetMonsters());
+                                    checkMaterialList.AddRange(Bot.Graveyard);
+                                    bool albazChecked = false;
+                                    bool hasOriginalAlbaz = checkMaterialList.Any(c => c.IsOriginalCode(CardId.FallenOfAlbaz));
+                                    foreach (ClientCard checkCard in checkMaterialList)
+                                    {
+                                        if (!albazChecked && checkCard.IsCode(CardId.FallenOfAlbaz) && (!hasOriginalAlbaz || !checkCard.IsOriginalCode(CardId.AlbionTheShroudedDragon)))
+                                        {
+                                            albazChecked = true;
+                                            continue;
+                                        }
+                                        if (checkCard.HasAttribute(CardAttribute.Dark)) return true;
+                                    }
+                                    if (Bot.HasInHand(CardId.TriBrigadeMercourier) && Bot.Hand.Count() >= 2) return true;
+                                }
+                                return false;
+                            } },
+                            {CardId.BorreloadFuriousDragon, () => {
+                                if (Enemy.GetMonsterCount() + Enemy.GetSpellCount() > 0)
+                                {
+                                    int darkDragonCount = Bot.Graveyard.Where(c => c.HasRace(CardRace.Dragon) && c.HasAttribute(CardAttribute.Dark)
+                                        && !cannotBeFusionMaterialIdList.Contains(c.Id)
+                                        && (Duel.Player == 1 || !c.IsCode(new int[] {CardId.AlbionTheBrandedDragon, CardId.TitanikladTheAshDragon}) || !sendToGYThisTurn.Contains(c)) ).Count();
+                                    if (Duel.Player == 1 && Bot.GetMonsters().Any(c => c.HasRace(CardRace.Dragon) && c.HasAttribute(CardAttribute.Dark) && !cannotBeFusionMaterialIdList.Contains(c.Id))) {
+                                        darkDragonCount ++;
+                                    }
+                                    return darkDragonCount >= 2;
+                                }
+                                return false;
+                            } },
+                            {CardId.AlbionTheSanctifireDragon, () =>
+                            {
+                                ClientCard albaz = Bot.Graveyard.FirstOrDefault(c => c.IsCode(CardId.FallenOfAlbaz));
+                                ClientCard lightSpellcaster = Bot.Graveyard.FirstOrDefault(c => c.HasRace(CardRace.SpellCaster) && c.HasAttribute(CardAttribute.Light));
+                                int remainMonsterCount = Enemy.GetGraveyardMonsters().Count();
+                                remainMonsterCount += Bot.Graveyard.Where(c => c.IsMonster() && c != albaz && c != lightSpellcaster).Count();
+                                remainMonsterCount += Bot.HasInHand(_CardId.MaxxC) ? 1 : 0;
+                                return remainMonsterCount >= 2;
+                            } },
+                            {CardId.RindbrummTheStrikingDragon, () => Bot.HasInGraveyard(CardId.TriBrigadeMercourier) },
+                            {CardId.TitanikladTheAshDragon, () =>
+                            {
+                                ClientCard albaz = Bot.Graveyard.FirstOrDefault(c => c != null && c.IsOriginalCode(CardId.FallenOfAlbaz));
+                                if (albaz == null)
+                                {
+                                    albaz = Bot.Graveyard.FirstOrDefault(c => c != null && c.IsCode(CardId.FallenOfAlbaz));
+                                }
+                                foreach (ClientCard material in Bot.Graveyard)
+                                {
+                                    if (material != null && material != albaz && material.IsMonster() && material.Attack >= 2500)
+                                    {
+                                        bool checkFlag = !Util.IsTurn1OrMain2() && Enemy.GetMonsterCount() == 0;
+                                        checkFlag |= !material.IsCode(CardId.AlbionTheBrandedDragon);
+                                        checkFlag |= !sendToGYThisTurn.Contains(material);
+                                        return checkFlag;
+                                    }
+                                }
+                                return false;
+                            } }
+                            // TODO
+                        };
+
+                        foreach (KeyValuePair<int, Func<bool>> pair in checkDict)
+                        {
+                            ClientCard target = cards.FirstOrDefault(card => card.IsCode(pair.Key));
+                            if (target != null && pair.Value())
+                            {
+                                fusionTarget = target;
+                                return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                            }
+                        }
+                    }
+                    // TODO
+                    if (hint == HintMsg.FusionMaterial)
+                    {
+
+                    }
+                    if (hint == HintMsg.OperateCard)
+                    {
+
+                    }
+                }
+               
                 // search operation
                 if (hint == HintMsg.AddToHand)
                 {
@@ -493,7 +678,7 @@ namespace WindBot.Game.AI.Decks
                     // for Aluber or Kitt
                     if (currentSolvingChain.IsCode(CardId.AluberTheJesterOfDespia) || currentSolvingChain.IsCode(CardId.SpringansKitt))
                     {
-                        checkDict = new Dictionary<int, Func<bool>>{
+                        checkDict = new Dictionary<int, Func<bool>> {
                             {CardId.BrandedFusion, () => BrandedFusionActivateCheck()},
                             {CardId.BrandedLost, () => {
                                 if (Duel.Player == 0 && Duel.Phase >= DuelPhase.End) return false;
@@ -547,7 +732,7 @@ namespace WindBot.Game.AI.Decks
                     }
                 }
 
-                // search for opening
+                // for opening
                 if (hint == HintMsg.OperateCard && currentSolvingChain.IsCode(CardId.BrandedOpening))
                 {
                     Dictionary<int, Func<bool>> checkDict = new Dictionary<int, Func<bool>>{
@@ -627,6 +812,28 @@ namespace WindBot.Game.AI.Decks
                         }
                     }
                 }
+
+                // for burial
+                if (currentSolvingChain.IsCode(CardId.FoolishBurial))
+                {
+                    ClientCard target = null;
+                    FoolishBurialTarget(cards, out target);
+                    if (target != null)
+                    {
+                        return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                    }
+                }
+
+                // for Sarcophagus
+                if (currentSolvingChain.IsCode(CardId.GoldSarcophagus))
+                {
+                    ClientCard target = null;
+                    GoldSarcophagusTarget(cards, out target);
+                    if (target != null)
+                    {
+                        return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                    }
+                }
             }
 
             // drop 1 hand
@@ -653,7 +860,9 @@ namespace WindBot.Game.AI.Decks
                         }
                     }
 
-                    List<int> discardList = new List<int> { CardId.BrandedRetribution, CardId.AlbionTheShroudedDragon, CardId.BrightestBlazingBrandedKing, CardId.BrandedInHighSpirits, CardId.BlazingCartesiaTheVirtuous };
+                    List<int> discardList = new List<int> {
+                        CardId.BrandedRetribution, CardId.AlbionTheShroudedDragon, CardId.BrightestBlazingBrandedKing, CardId.BrandedInHighSpirits,
+                        CardId.BlazingCartesiaTheVirtuous, CardId.BlazingCartesiaTheVirtuous };
                     foreach (int id in discardList)
                     {
                         ClientCard card = cards.FirstOrDefault(c => c.IsCode(id));
@@ -663,7 +872,29 @@ namespace WindBot.Game.AI.Decks
                         }
                     }
                 }
-                // TODO
+                // return dump card
+                foreach (ClientCard card in cards)
+                {
+                    if (cards.Where(c => c.IsCode(card.Id)).Count() > 1)
+                    {
+                        return Util.CheckSelectCount(new List<ClientCard> { card }, cards, min, max);
+                    }
+                }
+                List<int> improperCardIdList = new List<int>
+                {
+                    CardId.FusionDeployment, CardId.BrandedBeast, CardId.AlbionTheShroudedDragon, CardId.BrandedOpening, CardId.GoldSarcophagus,
+                    CardId.FoolishBurial, CardId.FallenOfAlbaz, CardId.BrandedInRed, _CardId.InfiniteImpermanence, CardId.TheBystialLubellion,
+                    CardId.BrandedLost, CardId.SpringansKitt, CardId.GuidingQuemTheVirtuous, _CardId.CalledByTheGrave, CardId.TriBrigadeMercourier,
+                    _CardId.AshBlossom, _CardId.MaxxC
+                };
+               foreach (int id in improperCardIdList)
+               {
+                    ClientCard target = cards.FirstOrDefault(c => c.IsCode(id));
+                    if (target != null)
+                    {
+                        return Util.CheckSelectCount(new List<ClientCard> { target }, cards, min, max);
+                    }
+               }
             }
 
             // for The Bystial Lubellion
@@ -1171,7 +1402,6 @@ namespace WindBot.Game.AI.Decks
                 activatedCardIdList.Add(Card.Id);
                 return true;
             }
-            return false;
         }
 
         public bool FallenOfAlbazSummon()
@@ -1292,8 +1522,9 @@ namespace WindBot.Game.AI.Decks
 
         public bool SpringansKittSummon()
         {
-            // TODO
-            return false;
+            if (CheckWhetherNegated(true, true, CardType.Monster) || enemyActivateLockBird || activatedCardIdList.Contains(Card.Id + 1)) return false;
+            summoned = true;
+            return true;
         }
 
         public bool SpringansKittActivate()
@@ -1301,7 +1532,7 @@ namespace WindBot.Game.AI.Decks
             // spsummon
             if (Card.Location == CardLocation.Hand)
             {
-                if (!CheckWhetherNegated(true, true, CardType.Monster)) return false;
+                if (CheckWhetherNegated(true, true, CardType.Monster)) return false;
                 if (CheckShouldNoMoreSpSummon() && !summoned)
                 {
                     return false;
@@ -1312,7 +1543,7 @@ namespace WindBot.Game.AI.Decks
             // search
             if (Card.Location == CardLocation.MonsterZone)
             {
-                if (!CheckWhetherNegated(true, true, CardType.Monster)) return false;
+                if (CheckWhetherNegated(true, true, CardType.Monster)) return false;
                 activatedCardIdList.Add(Card.Id + 1);
                 return true;
             }
@@ -1382,7 +1613,21 @@ namespace WindBot.Game.AI.Decks
 
         public bool TriBrigadeMercourierActivate()
         {
-            // TODO
+            // negate
+            if (Card.Location == CardLocation.Hand || Card.Location == CardLocation.MonsterZone)
+            {
+                if (CheckWhetherNegated(true, false, CardType.Monster) || !CheckLastChainShouldNegated()) return false;
+                if (Util.GetLastChainCard().Location == CardLocation.MonsterZone) currentNegateMonsterList.Add(Util.GetLastChainCard());
+                activatedCardIdList.Add(Card.Id);
+                return true;
+            }
+            // search
+            if (Card.Location == CardLocation.Removed)
+            {
+                if (CheckWhetherNegated(true, false, CardType.Monster)) return false;
+                activatedCardIdList.Add(Card.Id + 1);
+                return true;
+            }
             return false;
         }
 
@@ -1503,14 +1748,140 @@ namespace WindBot.Game.AI.Decks
 
         public bool GoldSarcophagusActivate()
         {
-            // TODO
+            if (CheckWhetherNegated(true, true, CardType.Spell)) return false;
+            if (GoldSarcophagusTarget(null, out _) > 0)
+            {
+                SelectSTPlace(Card, true);
+                return true;
+            }
             return false;
+        }
+
+        public int GoldSarcophagusTarget(IList<ClientCard> cards, out ClientCard target)
+        {
+            Dictionary<int, Func<bool>> checkDict = new Dictionary<int, Func<bool>>
+            {
+                {CardId.DespianTragedy, () => !activatedCardIdList.Contains(CardId.DespianTragedy) && !DefaultCheckWhetherCardIdIsNegated(CardId.DespianTragedy) },
+                {CardId.TriBrigadeMercourier, () => !activatedCardIdList.Contains(CardId.TriBrigadeMercourier + 1) && !DefaultCheckWhetherCardIdIsNegated(CardId.TriBrigadeMercourier) }
+            };
+            foreach (KeyValuePair<int, Func<bool>> pair in checkDict)
+            {
+                int cardId = pair.Key;
+                if (pair.Value())
+                {
+                    if (cards != null)
+                    {
+                        target = cards.FirstOrDefault(card => card.IsCode(pair.Key));
+                        if (target != null && pair.Value())
+                        {
+                            return cardId;
+                        }
+                    }
+                    else if (CheckRemainInDeck(cardId) > 0)
+                    {
+                        target = null;
+                        return cardId;
+                    }
+                }
+            }
+
+            target = null;
+            return 0;
         }
 
         public bool FoolishBurialActivate()
         {
-            // TODO
+            if (CheckWhetherNegated(true, true, CardType.Spell) || CheckWhetherWillbeRemoved()) return false;
+            if (FoolishBurialTarget(null, out _) > 0)
+            {
+                SelectSTPlace(Card, true);
+                return true;
+            }
             return false;
+        }
+
+        public int FoolishBurialTarget(IList<ClientCard> cards, out ClientCard target)
+        {
+            // tragedy
+            if (!activatedCardIdList.Contains(CardId.DespianTragedy) && !DefaultCheckWhetherCardIdIsNegated(CardId.DespianTragedy))
+            {
+                if (cards != null)
+                {
+                    target = cards.FirstOrDefault(c => c.IsCode(CardId.DespianTragedy));
+                    if (target != null)
+                    {
+                        return CardId.DespianTragedy;
+                    }
+                } else
+                {
+                    if (CheckRemainInDeck(CardId.DespianTragedy) > 0)
+                    {
+                        target = null;
+                        return CardId.DespianTragedy;
+                    }
+                }
+            }
+
+            // send to GY check
+            bool sendToGYFlag = CheckRemainInDeck(CardId.BrandedRetribution) > 0;
+            sendToGYFlag |= Bot.HasInGraveyard(CardId.BrandedRetribution) && CheckRemainInDeck(CardId.BrandedFusion) > 0;
+            if (sendToGYFlag)
+            {
+                Dictionary<int, Func<bool>> checkDict = new Dictionary<int, Func<bool>>
+                {
+                    {CardId.BystialSaronir, () => !activatedCardIdList.Contains(CardId.BystialSaronir + 1) && !DefaultCheckWhetherCardIdIsNegated(CardId.BystialSaronir) },
+                    {CardId.AlbionTheShroudedDragon, () => !activatedCardIdList.Contains(CardId.AlbionTheShroudedDragon) && !DefaultCheckWhetherCardIdIsNegated(CardId.AlbionTheShroudedDragon) }
+                };
+
+                foreach (KeyValuePair<int, Func<bool>> pair in checkDict)
+                {
+                    int cardId = pair.Key;
+                    if (pair.Value())
+                    {
+                        if (cards != null)
+                        {
+                            target = cards.FirstOrDefault(card => card.IsCode(pair.Key));
+                            if (target != null && pair.Value())
+                            {
+                                return cardId;
+                            }
+                        } else if (CheckRemainInDeck(cardId) > 0)
+                        {
+                            target = null;
+                            return cardId;
+                        }
+                    }
+                }
+            }
+
+            // albaz
+            if (!Bot.HasInGraveyard(CardId.FallenOfAlbaz))
+            {
+                bool albazCheckFlag = Bot.HasInHand(new List<int> { CardId.BlazingCartesiaTheVirtuous, CardId.BrandedInRed, CardId.BrandedInWhite });
+                if (albazCheckFlag)
+                {
+                    int albazCountCheck = Bot.HasInHandOrInSpellZone(CardId.BrandedFusion) ? 2 : 1;
+                    if (cards != null)
+                    {
+                        List<ClientCard> albazList = cards.Where(c => c.IsCode(CardId.FallenOfAlbaz)).ToList();
+                        if (albazList.Count() >= albazCountCheck)
+                        {
+                            target = albazList.First();
+                            return CardId.FallenOfAlbaz;
+                        }
+                    } else
+                    {
+                        if (CheckRemainInDeck(CardId.FallenOfAlbaz) >= albazCountCheck)
+                        {
+                            target = null;
+                            return CardId.FallenOfAlbaz;
+                        }
+                    }
+                }
+            }
+
+            target = null;
+            return 0;
         }
 
         public bool CalledbytheGraveActivate()
